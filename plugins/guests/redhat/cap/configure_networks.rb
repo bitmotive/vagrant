@@ -21,11 +21,6 @@ module VagrantPlugins
           networks.each do |network|
             interfaces.add(network[:interface])
 
-            # Down the interface before munging the config file. This might fail
-            # if the interface is not actually set up yet so ignore errors.
-            machine.communicate.sudo(
-              "/sbin/ifdown eth#{network[:interface]} 2> /dev/null", error_check: false)
-
             # Remove any previous vagrant configuration in this network interface's
             # configuration files.
             machine.communicate.sudo("touch #{network_scripts_dir}/ifcfg-eth#{network[:interface]}")
@@ -46,23 +41,20 @@ module VagrantPlugins
             machine.communicate.upload(temp.path, "/tmp/vagrant-network-entry_#{network[:interface]}")
           end
 
-          # Bring down all the interfaces we're reconfiguring. By bringing down
-          # each specifically, we avoid reconfiguring eth0 (the NAT interface) so
-          # SSH never dies.
+          # Overwrite the existing interface configuration 
+          # script with the one we just created and stored in /tmp
           interfaces.each do |interface|
             retryable(on: Vagrant::Errors::VagrantError, tries: 3, sleep: 2) do
-              # The interface should already be down so this probably
-              # won't do anything, so we run it with error_check false.
-              machine.communicate.sudo(
-                "/sbin/ifdown eth#{interface} 2> /dev/null", error_check: false)
-
-              # Add the new interface and bring it up
               machine.communicate.sudo("cat /tmp/vagrant-network-entry_#{interface} >> #{network_scripts_dir}/ifcfg-eth#{interface}")
-              machine.communicate.sudo("ARPCHECK=no /sbin/ifup eth#{interface} 2> /dev/null")
             end
 
+            # Delete all temporary interface files
             machine.communicate.sudo("rm -f /tmp/vagrant-network-entry_#{interface}")
           end
+
+          # Restart networking for all changes to take effect
+          machine.communicate.sudo("/sbin/service network restart 2> /dev/null")
+
         end
       end
     end
